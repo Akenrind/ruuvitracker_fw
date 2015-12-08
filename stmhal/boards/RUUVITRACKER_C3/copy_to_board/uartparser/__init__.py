@@ -119,11 +119,14 @@ class UARTParser():
             return
 
         eolpos = self.recv_bytes.find(self.EOL, self._sol)
+        
         while eolpos > -1:
             # End Of Line detected
             self.line = self.recv_bytes[self._sol:eolpos]
             flushnow = True
-            print("_line=%s" % self.line)
+            #print("_line=%s" % self.line)
+            #raw = self._str_cbs['raw']
+	    #raw[2](self.line)
             
             # The special case of a command callback
             if self._cmd_cb:
@@ -138,9 +141,12 @@ class UARTParser():
 
             for cbid in self._str_cbs:
                 cbinfo =  self._str_cbs[cbid]
-                if getattr(self.line, cbinfo[0])(cbinfo[1]):
-                    if (cbinfo[2](self.line)):
-                        flushnow = False
+                if cbinfo[1]:
+					if not cbinfo[0]: # No method
+						cbinfo[2](self.line)
+					else if getattr(str(self.line), cbinfo[0])(cbinfo[1]):
+						if (cbinfo[2](self.line)):
+							flushnow = False
 
             for cbid in self._re_cbs:
                 cbinfo =  self._re_cbs[cbid]
@@ -183,10 +189,11 @@ class UARTParser():
         if cbid in self._str_cbs:
             raise CallbackError("Trying to add same callback twice")
         # Check that the method is valid
-        getattr(self.recv_bytes, method)
+        if method:
+        	getattr(self.recv_bytes, method)
         # And add the the callback list
         self._str_cbs[cbid] = (method, checkstr, cb)
-
+ 
     def del_line_callback(self, cbid):
         """Removes a line callback"""
         if cbid in self._str_cbs:
