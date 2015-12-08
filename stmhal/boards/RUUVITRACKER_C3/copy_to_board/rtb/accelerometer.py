@@ -22,9 +22,10 @@ class mma8652:
 		self.bus.mem_write(test, self.addr, 0x2b, timeout=200)
 		
 	def reset(self):
+		# TODO: The device ought to be in standby mode for configuration
 		""" Software reset """
 		reset = ord(self.bus.mem_read(1, self.addr, 0x2b, timeout=200))
-		reset |= (0x00 ^ 0x40) # Set bit 6 to 1
+		reset |= (0x00 ^ 0x40)
 		self.bus.mem_write(chr(reset), self.addr, 0x2b, timeout=200)
 
 	def set_fast_read(self, enabled):
@@ -32,6 +33,7 @@ class mma8652:
 		self.fast_read = enabled
 
 		conf = ord(self.bus.mem_read(1, self.addr, 0x2a, timeout=200))
+
 		if self.fast_read:
 			conf |= ( 1 << 0x01 )
 		else:
@@ -58,7 +60,13 @@ class mma8652:
 		else:
 			l = self.bus.mem_read(3, self.addr, 0x01, timeout=200, addr_size=12)
 
-		return (str(l))
+		return l
+
+	def stream(self, interval):
+		yield from sleep(interval)
+		value = self.read()
+		print("%s" %value)
+		get_event_loop().call_soon(self.stream(interval))
 
 	def set_fifo(self, enabled):
 		""" Enable/disable Fast Read Mode """
@@ -90,10 +98,10 @@ class mma8652:
 		self.bus.mem_write(0x02, self.addr, FF_MT_COUNT, timeout=200)
 
 		# Set motion threshold. DEBUG
-		self.bus.mem_write(0x08, self.addr, FF_MT_THS, timeout=200)
+		self.bus.mem_write(0xB0, self.addr, FF_MT_THS, timeout=400)
 
 		# Set actual motion configuration
-		self.bus.mem_write(0xf8, self.addr, FF_MT_CFG, timeout=200)
+		self.bus.mem_write(0xf8, self.addr, FF_MT_CFG, timeout=400)
 
 		# Active mode, odr = 1.56 Hz
 		# Set Fast Read Mode for 8-bit results. GO

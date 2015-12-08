@@ -2,7 +2,6 @@ import pyb
 import rtb
 import uartparser
 from uasyncio.core import get_event_loop, sleep
-import time, math
 
 # TODO: This thing needs a proper state machine to keep track of the sleep modes
 
@@ -48,30 +47,6 @@ class GSM:
 		# Just to keep consistent API, make this a coroutine too
 		self.set_flow_control()
 		yield from self.at_id()
-
-	def obtain_num(self, line):
-		self._ID = line
-		return True
-
-	def obtain_time(self, line):
-		self.network_time = line
-		return True
-
-	def obtain_data(self, line):
-		self.configuration = line
-		return True
-
-	def execute_cmd(self, cmd, *param, **kw_params):
-		""" Command execution wrapper """
-		cmd = yield from self.uart.cmd(cmd)
-		urc = None
-		# Wait for response
-		if('wait' in kw_params):
-			yield from sleep(int(kw_params['wait']))
-		if('urc' in kw_params):
-			urc = kw_params['urc']
-
-		resp = yield from self.uart.urc.retrieve_response(cmd, urc, 500)
 
 	def push_powerbutton(self, push_time=2000):
 		rtb.GSM_PWR_PIN.low()
@@ -121,21 +96,20 @@ class GSM:
 
 	def at_id(self):
 		# Wait 7 seconds after fresh boot
-		yield from self.execute_cmd('AT', wait="7000")
+		yield from sleep(7000)
+		yield from self.execute_cmd('AT')
 		# Init network time. Takes a while.
-		yield from self.execute_cmd("AT+CLTS=1", urc="PSUTTZ", wait="1000")
+		yield from self.execute_cmd("AT+CLTS=1", urc="PSUTTZ")
 
 		# Obtain phone number for ID
+		yield from sleep(2000)
 		yield from self.execute_cmd('AT+CNUM', wait="3000")
 
 		# Is there GPRS context attached
-		yield from self.execute_cmd('AT+CGATT?', wait="1000")
+		yield from self.execute_cmd('AT+CGATT?')
 
 		# Is SIM inserted and ready?
-		yield from self.execute_cmd('AT+CPIN?', wait="2000")
-
-		# Fetch network time
-		yield from self.execute_cmd('AT+CCLK?')
+		yield from self.execute_cmd('AT+CPIN?')
 
 	def at_connect(self):
 		# Can only be done if CPIN is ready.
@@ -179,8 +153,17 @@ class GSM:
 		yield from sleep(2000)
 		yield from self.execute_cmd('AT+HTTPTERM')
 
+	def execute_cmd(self, cmd, *param, **kw_params):
+		""" Command execution wrapper """
+		cmd = yield from self.uart.cmd(cmd)
+		urc = None
+		if('urc' in kw_params):
+			urc = kw_params['urc']
+
+		resp = yield from self.uart.urc.retrieve_response(cmd, urc, 500)
+
 	def configure_tracker(self, *args, **kwargs):
-		yield from self.at_get("conf", *args, **kwargs) # Toimenpide
+		yield from self.at_get("conf", *args, **kwargs)
 
 	def at_get(self, subaddr, *args, **kwargs):
 		url = '"http://%s:%s/%s?' % (server_url, PORT, subaddr)
@@ -205,7 +188,7 @@ class GSM:
 
 		yield from self.execute_cmd('AT+HTTPACTION=0') # GET
 		yield from sleep(5000)
-		yield from self.execute_cmd('AT+HTTPREAD', parse="configuration")
+		yield from self.execute_cmd('AT+HTTPREAD')
 		yield from sleep(2000)
 		yield from self.execute_cmd('AT+HTTPTERM')
 
@@ -213,10 +196,19 @@ class GSM:
 		yield from self.execute_cmd('AT+SAPBR=0,1') # Close GPRS context
 		yield from self.execute_cmd('AT+CIPCLOSE') # Shut down connections
 		yield from self.execute_cmd('AT+CIPSHUT') # Shut down connections
-		yield from self.at_detach()
-
-	def at_detach(self):
 		yield from self.execute_cmd('AT+CGATT=0') # Detach GPRS
+
+	def obtain_num(self, line):
+		self._ID = line
+		return True
+
+	def obtain_time(self, line):
+		self.network_time = line
+		return True
+
+	def obtain_data(self, line):
+		self.configuration = line
+		return True
 
 	def stop(self):
 		self.uart.del_line_callback('raw')

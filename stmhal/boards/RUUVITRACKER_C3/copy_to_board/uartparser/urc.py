@@ -9,7 +9,8 @@ class URCParser():
 	URC_TABLE = {}
 
 	def __init__(self):
-		""" Hard coded URC events """
+		# TODO: auto-delete
+		""" Hard coded URC events. """
 		self.URC_TABLE['+CGATT'] = self.parse_index
 		self.URC_TABLE['+CNUM'] = self.parse_number
 		self.URC_TABLE['+CGATT'] = self.parse_index
@@ -87,7 +88,7 @@ class URCParser():
 			for key in self.URC_TABLE:
 				if key in b:
 					b = b[b.index[key]+len(key):]
-					print("Congrats. URC! It is %s" %b)
+					print("URC %s" %b)
 		return True
 
 	def parse_http_data(self, string):
@@ -106,7 +107,7 @@ class URCParser():
 			print("Obtained http data: %s\n" %data)
 
 	def parse_number(self, line):
-		""" Finds phone number from response. This callback should automatically delete itself. """
+		""" Finds phone number from response. (auto-delete callback)... """
 		# Remove quotes and split, with "," being the delimiter
 		elements = str(line).replace('"', '').split(',')
 
