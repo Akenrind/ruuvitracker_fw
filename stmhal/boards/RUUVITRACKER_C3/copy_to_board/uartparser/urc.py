@@ -1,16 +1,17 @@
 # TODO: clean this mess up...
 from uasyncio import get_event_loop, sleep
 
-class URCParser():
+class URC():
 	""" Further parsing for URCs received from UART """
 	_current_buffer = ""
 	_events = {}
+	_override = False # Override with raw mode
 
 	URC_TABLE = {}
 
 	def __init__(self):
-		# TODO: auto-delete
 		""" Hard coded URC events. """
+		# TODO: redundant
 		self.URC_TABLE['+CGATT'] = self.parse_index
 		self.URC_TABLE['+CNUM'] = self.parse_number
 		self.URC_TABLE['+CGATT'] = self.parse_index
@@ -18,47 +19,48 @@ class URCParser():
 		self.URC_TABLE['PSUTTZ'] = self.parse_time
 		self.URC_TABLE['+HTTPREAD'] = self.parse_http_data
 
-	def add_event(self, cbid, method):
-		if not cbid in self._events:
-			self._events[cbid] = (method)
+	def add_event(self, eventid, method):
+		if not eventid in self._events:
+			self._events[eventid] = (method)
 
-	def remove_event(self, cbid):
-		if cbid in self._events:
-			del (self._events[cbid])
+	def remove_event(self, eventid):
+		if eventid in self._events:
+			del (self._events[eventid])
     
 	def retrieve_response(self, cmd, urc, timeout):
 		resp_str = ""
-		timeout_iterate = 1 # math.floor(timeout / 100)
-		# TODO: this function
+		timeout_iterate = int(timeout / 200)
 
 		if type(cmd) == type(b''): # Not commandTimeouts etc.
 			while timeout_iterate:
-				yield from sleep(100)
-				timeout_iterate = 0
-				#max(0, timeout_iterate-100)
+				timeout_iterate = max(0, timeout_iterate-200)
 				resp_str = str(self._current_buffer)
 
-				# Cut out commands from possible responses.
+				# Cut out commands from possible responses
 				culled_cmd = str(cmd[len("AT"):])
 
-				if culled_cmd[len(culled_cmd)-1] == "'": # If ends with '
+				if culled_cmd[len(culled_cmd)-1] == "'":
 					culled_cmd = culled_cmd[:-1]
 
 				if resp_str.startswith(culled_cmd):
 					resp_str = resp_str[len(culled_cmd):]
 
-				# If still urc with this callback, ITERATE until timeout
-
-		print("[URC]: %s -- %s" %(cmd, resp_str))
-		self.flush() # TODO: asd
-		return resp_str
+				if not urc in resp_str:
+					yield from sleep(200)
+				else:
+					resp_str = resp_str[resp_str.index[urc]+len(urc):]
+					print("[URC]: %s -- %s" %(urc, resp_str))
+					self.flush()
+					timeout_iterate = 0
+		return resp_str.split(",")
 
 	def parse_urc_table(self, line):
 		for key in self.URC_TABLE:
 			if key in line:
 				a = self.URC_TABLE[key](line)
 				if a:
-					a()
+					a() # Auto-delete callback after calling
+					del self.URC_TABLE[key]
 
 	def flush(self):
 		self._current_buffer = ""
@@ -73,23 +75,17 @@ class URCParser():
 		for c in strfy:
 			if c in r' \n\t\r': # Cull "Whitespace"
 				strfy.replace(c, '')
-		if not strfy or strfy is "b''" or "AT+" in strfy: # Cull commands
-			get = False
-		if get:
+		if not (not strfy or strfy is "b''" or "AT+" in strfy): # Cull commands
 			buf = self._current_buffer + (strfy)
-			if "OK" in buf or "ERROR" in buf: # unless override
-				self.parse_urc(line, False)
+			if "OK" in buf or "ERROR" in buf and not self._override:
+				pass
 			else:
 				self._current_buffer = buf
 			self.parse_urc_table(line)
 			
-			# Auto-delete callbacks
-			b = self._current_buffer
-			for key in self.URC_TABLE:
-				if key in b:
-					b = b[b.index[key]+len(key):]
-					print("URC %s" %b)
 		return True
+
+	# TODO: these aren't necessary if we hardcode AT response index...
 
 	def parse_http_data(self, string):
 		elements = string.replace("'","|").split("|")
@@ -107,7 +103,7 @@ class URCParser():
 			print("Obtained http data: %s\n" %data)
 
 	def parse_number(self, line):
-		""" Finds phone number from response. (auto-delete callback)... """
+		""" Finds phone number """
 		# Remove quotes and split, with "," being the delimiter
 		elements = str(line).replace('"', '').split(',')
 
@@ -116,10 +112,9 @@ class URCParser():
 
 			if(len(str(num)) > 9 and len(str(num)) <= 17):
 				print("[URC]: Phone number found: ", str(num[0]))
-				# self._ID = str(num[0])
-				# DISPATCH
 				if '+CNUM' in self._events:
 					self._events['+CNUM'](str(num[0]))
+					return str(num[0])
 				# Delete callback from premises and only add it again if ID is not present
 
 	def parse_index(self, line):

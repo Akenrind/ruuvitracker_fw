@@ -2,6 +2,7 @@
 import pyb
 import rtb.eventloop
 from uasyncio import get_event_loop, sleep, StreamReader, StreamWriter
+from .urc import URC
 
 # Errors
 class UARTParserError(RuntimeError):
@@ -42,6 +43,7 @@ class UARTParser():
     line = b'' # Last detected complete line without EOL marker
     uart = None
     stream = None
+	urc = None
 
     _run = False
     _stopped = True
@@ -55,6 +57,7 @@ class UARTParser():
     def __init__(self, uart):
         self.uart = uart
         self.stream = RWStream(self.uart)
+		self.urc = URC()
 
     def flush(self):
         self.recv_bytes = b''
@@ -144,7 +147,7 @@ class UARTParser():
                 if cbinfo[1]:
 					if not cbinfo[0]: # No method
 						cbinfo[2](self.line)
-					else if getattr(str(self.line), cbinfo[0])(cbinfo[1]):
+					if getattr(str(self.line), cbinfo[0])(cbinfo[1]):
 						if (cbinfo[2](self.line)):
 							flushnow = False
 
