@@ -11,26 +11,31 @@ class mma8652:
 	def __init__(self, addr=0x1d):
 		self.bus = I2C(1, I2C.MASTER)
 		self.addr = addr
+
+	# TODO: Remember: the device ought to be in standby mode for configuration
 		
 	def test(self, enable):
 		""" In a self-test, X, Y, and Z outputs will shift. """
+		# *standby?*
 		test = ord(self.bus.mem_read(1, self.addr, 0x2b, timeout=200))
 		if enable:
 			test |= (0x00 ^ 0x80)
 		else:
 			test &= (0xff ^ 0x80)
-		self.bus.mem_write(test, self.addr, 0x2b, timeout=200)
+		self.bus.mem_write(chr(test), self.addr, 0x2b, timeout=200)
 		
 	def reset(self):
-		# TODO: The device ought to be in standby mode for configuration
 		""" Software reset """
+		self.standby(True)
 		reset = ord(self.bus.mem_read(1, self.addr, 0x2b, timeout=200))
 		reset |= (0x00 ^ 0x40)
 		self.bus.mem_write(chr(reset), self.addr, 0x2b, timeout=200)
+		self.standby(False)
 
 	def set_fast_read(self, enabled):
 		""" Enable / disable fast read mode """
 		self.fast_read = enabled
+		self.standby(True)
 
 		conf = ord(self.bus.mem_read(1, self.addr, 0x2a, timeout=200))
 
@@ -39,7 +44,8 @@ class mma8652:
 		else:
 			conf &= ~( 1 << 0x01 )
 
-		self.bus.mem_write(conf, self.addr, 0x2a, timeout=200)
+		self.bus.mem_write(chr(conf), self.addr, 0x2a, timeout=200)
+		self.standby(False)
 
 	def standby(self, enable):
 		""" Put accelerometer to / wake up from standby mode """
@@ -49,24 +55,25 @@ class mma8652:
 		else:
 			conf |= ( 1 << 0x01 )
 
-		self.bus.mem_write(conf, self.addr, 0x2a, timeout=200)
+		self.bus.mem_write(chr(conf), self.addr, 0x2a, timeout=200)
 	
 	def read(self):
 		""" Read sensor data """
 		#r = self.bus.mem_read(1, self.addr, 0x16, timeout=200, addr_size=8)
 		#print("Event: %s" %r)
+		# TODO: it's doing something funny with auto-incrementation or something T_T
 		if self.fast_read:
-			l = self.bus.mem_read(3, self.addr, 0x01, timeout=200, addr_size=8)
+			#xyz = self.bus.mem_read(3, self.addr, 0x01, timeout=500, addr_size=8)
+			x = self.bus.mem_read(1, self.addr, 0x01, timeout=500, addr_size=8)
+			y = self.bus.mem_read(1, self.addr, 0x02, timeout=500, addr_size=8) # auto
+			z = self.bus.mem_read(1, self.addr, 0x03, timeout=500, addr_size=8) # auto
 		else:
-			l = self.bus.mem_read(3, self.addr, 0x01, timeout=200, addr_size=12)
+			#xyz = self.bus.mem_read(3, self.addr, 0x01, timeout=500, addr_size=12)
+			x = self.bus.mem_read(1, self.addr, 0x01, timeout=500, addr_size=12)
+			y = self.bus.mem_read(1, self.addr, 0x02, timeout=500, addr_size=12)
+			z = self.bus.mem_read(1, self.addr, 0x03, timeout=500, addr_size=12)
 
-		return l
-
-	def stream(self, interval):
-		yield from sleep(interval)
-		value = self.read()
-		print("%s" %value)
-		get_event_loop().call_soon(self.stream(interval))
+		return "x: %s, y: %s, z: %s" % (x, y, z)
 
 	def set_fifo(self, enabled):
 		""" Enable/disable Fast Read Mode """

@@ -6,8 +6,6 @@ from uasyncio.core import sleep
 from .powerdomains import powermanager_singleton
 from . import powerdomains_config as pwr
 
-from .accelerometer import onboard as accel
-
 
 pwrmgr = powermanager_singleton
 

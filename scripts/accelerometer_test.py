@@ -1,4 +1,3 @@
-# Proto
 from uasyncio.core import get_event_loop,sleep
 from rtb.accelerometer import onboard as a
 

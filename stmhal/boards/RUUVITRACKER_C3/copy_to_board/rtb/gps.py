@@ -52,17 +52,17 @@ class GPS:
     # TODO: Add GPS command methods (like setting the interval, putting the module to various sleep modes etc)
     # @see https://github.com/RuuviTracker/ruuvitracker_hw/blob/revC3/datasheets/SIM28_SIM68R_SIM68V_NMEA_Messages_Specification_V1.01.pdf
 
-     def fill_buffer(self, interval_ms, timeout):
-	yield from sleep(interval_ms)
+    def fill_buffer(self, interval_ms, timeout):
+		yield from sleep(interval_ms)
 
-	if len(self._buffer) > 8:
-		self._buffer.pop(0)
+		if len(self._buffer) > 8:
+			self._buffer.pop(0)
 
-	if self.last_update >= timeout:
-		self._buffer.append("nofix")
-		self._notice = "GPS: Fix was lost %s seconds ago" %(self.last_update/1000)
+		if self.last_update >= timeout:
+			self._buffer.append("nofix")
+			self._notice = "GPS: Fix was lost %s seconds ago" %(self.last_update/1000)
 
-	return self._buffer(len(self._buffer))
+		#return self._buffer(len(self._buffer))
 
     def gprmc_received(self, match):
         line = match.group(0)
@@ -80,7 +80,7 @@ class GPS:
             print("===\r\nRMC lat=%s lon=%s altitude=%s\r\n==" % (self.last_fix.lat, self.last_fix.lon, self.last_fix.altitude))
             # TODO: Check if anyone wants to see the fix yet
             
-            item = 'lat:%s, lon:%s, alt:%s, speed:%s, time:%s-%s-%s|%s:%s:%s|UTC' %(self.last_fix.lat, self.last_fix.lon, self.last_fix.altitude, self.last_fix.dt.year, self.last_fix.dt.month, self.last_fix.dt.day, self.last_fix.dt.hh, self.last_fix.dt.mm, self.last_fix.dt.ss)
+            item = 'lat:%s, lon:%s, alt:%s, speed:%s, time:%s-%s-%s|%s:%s:%sZZ' %(self.last_fix.lat, self.last_fix.lon, self.last_fix.altitude, self.last_fix.dt.year, self.last_fix.dt.month, self.last_fix.dt.day, self.last_fix.dt.hh, self.last_fix.dt.mm, self.last_fix.dt.ss)
             self._buffer.append(item)
 
     def gpgga_received(self, match):
