@@ -21,6 +21,9 @@ class GSM:
 	CGATT = False # GPRS context attached
 	CPIN = False # PIN inserted / ready
 	PDP = False # GPRS PDP context
+	
+	# Sleep request and cause of sleep
+	# eg. sim is locked?
 
 	def __init__(self):
 		pass
@@ -48,6 +51,7 @@ class GSM:
 		rtb.GSM_DTR_PIN.low()
 
 		# Just to keep consistent API, make this a coroutine too
+
 		yield
 
 	def push_powerbutton(self, push_time=2000):
@@ -88,7 +92,7 @@ class GSM:
 		resp = yield from self.uart.cmd("AT+CSCLK=%d" % mode)
 
 	# TODO: Autobauding -> set baud and flow control (rmember to reinit the UART...)
-	def set_flow_control(value=True):
+	def set_flow_control(self, value=True):
 		"""Enables/disables RTS/CTS flow control on the module and UART"""
 		if value:
 		    resp = yield from self.uart.cmd("AT+IFC=2,2")
@@ -113,25 +117,38 @@ class GSM:
 
 	def at_id_init(self):
 		# Obtain subscriber number for 'client ID'
-		self.CNUM = yield from self.retrieve_urc('AT+CNUM', index=1, timeout=2000)
-
+		ready = yield from self.at_ready()
+		if ready:
+			self.CNUM = yield from self.retrieve_urc('AT+CNUM', index=1, timeout=3000)
 		# TODO: Why??
-		#attached = yield from self.retrieve_urc('AT+CGATT?')
-		#self.CGATT = '1' in attached
-		#if self.CGATT:
-		#	yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
+		attached = yield from self.retrieve_urc('AT+CGATT?', timeout=500)
+		self.CGATT = '1' in attached
+		if self.CGATT:
+			yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
 
 	def at_ready(self):
-		ready = yield from self.retrieve_urc('AT+CPIN?')
-		self.CPIN = 'READY' in ready
+		pin = yield from self.retrieve_urc('AT+CPIN?', timeout=1000)
+		if pin:
+			print("%s" %(pin))
+			self.CPIN = 'READY' in pin
+			if 'SIM' in pin:
+				print("SIM card is locked. Please use unlock it with a cell phone (recommended) or with a gsm method. (More at Github Readme)")
 		return self.CPIN
+
+	def unlock_sim_pin(self, code):
+		""" Unlocks SIM. Do NOT use this function unless you are absolutely out of equipment (cell phones) """
+		if code:
+			yield from self.retrieve_urc('AT+CPIN=%s' %code)
+			yield from sleep(2000)
+			yield from self.retrieve_urc('AT+CLCK="SC",0,"%s"' %code)
+			yield from sleep(2000)
 
 	def at_connect(self, PROXY_IP, USERNAME, PASSWORD):
 		""" Connects to GPRS proxy server. Connection may only be carried out if CPIN is ready """
 		if self.at_ready():
 			# Query connection status
-			status = yield from self.retrieve_urc('AT+CIPSTATUS', urc='STATE')
-			if int(status):
+			status = yield from self.retrieve_urc('AT+CIPSTATUS', 'STATE')
+			if int(status.decode()):
 				# Close all previous IP sessions
 				self.uart.cmd("AT+CIPSHUT")
 
@@ -151,7 +168,7 @@ class GSM:
 				error = yield from self.retrieve_urc('AT+CIICR') # TODO: run until complete
 				yield from sleep(5000)
 				# Local IP get. Might be mandatory in some cases. Must be called after PDP context activation.
-				yield from self.uart.cmd('AT+CIFSR', 'CIFSR')
+				yield from self.uart.cmd('AT+CIFSR')
 
 				# -> Raw TCP:
 				# yield from self.uart.cmd('AT+CIPSTART="TCP","%s","%s"' %(server_url, PORT))
@@ -170,7 +187,7 @@ class GSM:
 		if self.CGATT:
 			yield from self.uart.cmd('AT+CGATT=0')
 
-    def start_http_session(self, PROXY_IP):
+	def start_http_session(self, PROXY_IP):
 		""" Called after at_connect """
 		# Init HTTP service
 		yield from self.uart.cmd('AT+HTTPINIT')
@@ -217,10 +234,13 @@ class GSM:
 		self.uart.urc.OVERRIDE = False
 		return resp
 
-	def retrieve_urc(self, cmd, urc=None, index=0, timeout=600):
+	def retrieve_urc(self, cmd, urc="", index=0, timeout=600):
 		""" URC handler wrapper """
-		cmd = yield from self.uart.cmd(cmd)
+		self.uart.urc.flush()
+		command = yield from self.uart.cmd(cmd)
 		resp = yield from self.uart.urc.retrieve_response(cmd, urc, index, timeout)
+		if not resp:
+			print("No URC obtained in time.")
 		return resp
 
 	def stop(self):
