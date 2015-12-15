@@ -3,21 +3,24 @@ from uasyncio import get_event_loop, sleep
 class URC():
 	""" Further parsing for URCs from the UART """
 	_current_buffer = ""
-	_events = []
+	_events = {}
 	OVERRIDE = False
 
 	PARSE = {}
 
 	def __init__(self):
-		# TODO: redundant hard-coded 'further parsing' methods
+		# TODO: hard-coded 'further parsing' methods
 		self.PARSE['PSUTTZ'] = self.parse_time
 		self.PARSE['HTTPREAD'] = self.parse_http_data
+
+	def add_event(self, name, cb):
+		if not name in self._events:
+			self._events[name] = (cb)
+		# Events automatically delete themselves..?
     
 	def retrieve_response(self, cmd, urc="", index=0, timeout=600, interval=200):
 		resp_str = ""
 		timeout_iterate = int(timeout / interval)
-		#if type(cmd) == type(b''): # Why?
-		#	cmd = cmd.decode()
 
 		if not urc: # use default URC
 			urc = cmd[3:] # By default, urc is [AT+]URC[?][=<sth>]
@@ -25,8 +28,7 @@ class URC():
 				urc = urc[:-1] # Remove questionmark
 			if "=" in urc: # Command was an execution command or test command
 				urc = (str(urc.split("=")))[0] # Exclude parameters
-
-			print("Searching for this urc: %s" %urc)
+			#print("DEBUG: Searching for this urc: %s" %urc)
 
 		while timeout_iterate:
 			timeout_iterate = max(0, timeout_iterate)
@@ -43,39 +45,42 @@ class URC():
 				yield from sleep(interval)
 			else:
 				resp_str = resp_str[resp_str.index(urc)+len(urc)+2:] # Remember to take off ": "
+				# If not override				
 				try:
 					end = resp_str.index('+')
 					resp_str = resp_str[:end]
 				except ValueError:
-					print("No string ;_;")
+					end = None
 				print("%s --- %s" %(cmd, resp_str))
 				self.flush()
 				
+				# Return 'raw data' by default (eg. http data)
+
 				if not self.OVERRIDE: # Return data in index, not raw data
 					response = resp_str.split(",") # URC indices split
 					index = min(index, len(response)-1)
-					return response[index]
-
-				else:
-					response = resp_str
-					# Parse further, if necessary
-					for e in self._events:
-						if e in resp_str:
-							a = self.PARSE[e](response)
-							if a:
-								response = a()
-								_events.remove(e)
-					return response # Return 'raw data' (eg. http data)
+					#response[index] = response[index][1:-1] # Take off double quotes
+					resp_str = response[index]
+				return resp_str
 		else:
 			return ""
 
 	def flush(self):
 		self._current_buffer = ""
 
+	def parse_events(self, line):
+		# Parse further, if necessary
+		if self._events:
+			for e in self._events:
+				if e in line:
+					a = self.PARSE[e](line)
+					if a:
+						print("DEBUG: dispatching data: %s" %a) # Boot time
+						self._events[e](a)
+
 	# Omits EOLs
 	def parse_urc(self, line): # TODO: perform ure callback here & test
 		strfy = line.decode()
-		print(strfy)
 		for c in strfy:
 			if c in r' \n\t\r': # Cull "Whitespace"
 				strfy.replace(c, '')
@@ -83,24 +88,20 @@ class URC():
 			buf = self._current_buffer + (strfy)
 			if "ERROR" in buf:
 				pass
-				# handle error
-			if "OK" in buf and not self.OVERRIDE: #or "ERROR" in buf and not self.OVERRIDE:
+				# TODO: handle error
+			if "OK" in buf and not self.OVERRIDE:
 				pass
 			else:
 				self._current_buffer = buf
-			#self.parse_urc_table(line)
+			self.parse_events(strfy)
 		return True
 
-		# TODO: clean up this MESS
+	# TODO: clean up this MESS
 		
 	def parse_time(self, line):
 		""" Parse Network time """
-		elem = str(line).split('"')
-
-		for j in elem:
-			if( len(str(j)) >= 15 and len(str(j)) < 21 ): # Timestamp length
-				time = str(j) # TODO: parse
-				return time
+		elem = line.split(':')
+		return elem[1] # TODO: Parse
 
 	def parse_http_data(self, string):
 		elements = string.replace("'","|").split("|")

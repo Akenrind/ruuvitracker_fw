@@ -36,10 +36,12 @@ class GSM:
 		self.uart = uartparser.UARTParser(self.uart_wrapper)
 
 		#self.uart.add_line_callback('sms', 'startswith', '+CTS', self.SMS_receive)
+		#self.uart.add_line_callback('pls', 'startswith', '+', self.request)
 		self.uart.add_line_callback('urc', None, None, self.uart.urc.parse_urc)
-		# Network time fetch will have a special callback because execution takes a LONG time
-		self.uart.urc._events.append('PSUTTZ')
-		self.uart.urc._events.append('HTTPREAD')
+		# Special callbacks
+		self.uart.urc.add_event('PSUTTZ', self.use_network_time)
+		self.uart.urc.add_event('HTTPREAD', self.fetch_data)
+		# The rest is automatic-ish...
 
 		# The parsers start method is a generator so it's called like this
 		get_event_loop().create_task(self.uart.start())
@@ -51,8 +53,11 @@ class GSM:
 		rtb.GSM_DTR_PIN.low()
 
 		# Just to keep consistent API, make this a coroutine too
-
 		yield
+
+	def fetch_data(self, line):
+		print("data: %s" %line)
+		return True
 
 	def push_powerbutton(self, push_time=2000):
 		rtb.GSM_PWR_PIN.low()
@@ -68,6 +73,8 @@ class GSM:
 		resp = yield from self.uart.cmd("AT+IPR=115200")
 		# Network registration messages enable
 		resp = yield from self.uart.cmd("AT+CREG=2")
+		# Network time fetch for first time
+		resp = yield from self.retrieve_urc("AT+CLTS=1")
 
 	def at_sms_init(self):
 		# Use Text mode with SMS
@@ -104,27 +111,42 @@ class GSM:
 	def at_test(self):
 		yield from self.uart.cmd('AT')
 
-	def fetch_network_time(self):
-		""" Use GSM network time as a timestamp """
-		if not self.network_time:
-			self.uart.urc.OVERRIDE = True # Data must be raw
-			self.network_time = yield from self.retrieve_urc("AT+CLTS=1", urc="PSUTTZ", index=1)
-		else: # Network time has been fetched at least once, and CCLK is local time. TODO: indicate.
-			self.network_time = yield from self.retrieve_urc("AT+CCLK") # This is local time
+	def use_network_time(self, time):
+		self.network_time = time
+		return True
 
-		self.uart.urc.OVERRIDE = False
-		return self.network_time
+	def fetch_network_time(self, time):
+		""" Use GSM network time as a timestamp """
+		print("Fetching network time!!!!")
+		if not time:
+			# Network time has been fetched at least once, and CCLK is local time. TODO: indicate.
+			self.network_time = yield from self.retrieve_urc("AT+CCLK", "CLK") # This is local time
+			return '+' in self.network_time
+		else:
+			self.network_time = time
+			return True
 
 	def at_id_init(self):
+		yield from sleep(10000)
+		#self.at_mode_init() No fixed baud T_T
+		#yield from sleep(5000)
 		# Obtain subscriber number for 'client ID'
+		resp = yield from self.uart.cmd('AT')
+		resp = yield from self.uart.cmd('ATE0')
+		#resp = yield from self.uart.cmd('AT+IPR=115200')
+		#yield from sleep(5000)
+		#resp = yield from self.uart.cmd('AT+IPR=115200')
+		#yield from sleep(5000)
+
+		#self.uart.urc._events.append('CNUM') # These events are removed automatically.
 		ready = yield from self.at_ready()
 		if ready:
-			self.CNUM = yield from self.retrieve_urc('AT+CNUM', index=1, timeout=3000)
-		# TODO: Why??
-		attached = yield from self.retrieve_urc('AT+CGATT?', timeout=500)
-		self.CGATT = '1' in attached
-		if self.CGATT:
-			yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
+			yield from sleep(2000)
+			self.CNUM = yield from self.retrieve_urc('AT+CNUM', urc="NUM", index=1, timeout=4000)
+			attached = yield from self.retrieve_urc('AT+CGATT?', urc="GATT", timeout=4000)
+			self.CGATT = '1' in attached
+			if self.CGATT:
+				yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
 
 	def at_ready(self):
 		pin = yield from self.retrieve_urc('AT+CPIN?', timeout=1000)
@@ -236,9 +258,9 @@ class GSM:
 
 	def retrieve_urc(self, cmd, urc="", index=0, timeout=600):
 		""" URC handler wrapper """
-		self.uart.urc.flush()
-		command = yield from self.uart.cmd(cmd)
-		resp = yield from self.uart.urc.retrieve_response(cmd, urc, index, timeout)
+		command = cmd
+		cmd = yield from self.uart.cmd(cmd)
+		resp = yield from self.uart.urc.retrieve_response(command, urc, index, timeout)
 		if not resp:
 			print("No URC obtained in time.")
 		return resp
@@ -247,6 +269,7 @@ class GSM:
 		# TODO: delete all callbacks
 		#self.uart.del_line_callback('sms')
 		self.uart.del_line_callback('urc')
+		self.uart.del_line_callback('pls')
 		yield from self.at_disconnect()
 		yield from self.push_powerbutton()
 		yield from self.uart.stop()
