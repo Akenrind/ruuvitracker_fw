@@ -75,6 +75,12 @@ class mma8652:
 
 		return "x: %s, y: %s, z: %s" % (x, y, z)
 
+	def stream(self, interval_ms):
+		while True:
+			a = read()
+			print(a)
+			yield
+
 	def set_fifo(self, enabled):
 		""" Enable/disable Fast Read Mode """
 		self.fifo = enabled

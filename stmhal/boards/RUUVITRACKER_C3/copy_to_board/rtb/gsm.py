@@ -15,12 +15,16 @@ class GSM:
 	uart = None # This is the parser
 
 	error = None # CME error
-	network_time = None # Indicates whether network time has been fetched, NOT updated in real-time
+	boot_time = None # Indicates whether network time has been fetched, NOT updated in real-time
 	CNUM = None # Subscriber number
 
 	CGATT = False # GPRS context attached
 	CPIN = False # PIN inserted / ready
 	PDP = False # GPRS PDP context
+	READY = False
+	
+	# Sleep request and cause of sleep
+	# eg. sim is locked?
 
 	def __init__(self):
 		pass
@@ -33,10 +37,12 @@ class GSM:
 		self.uart = uartparser.UARTParser(self.uart_wrapper)
 
 		#self.uart.add_line_callback('sms', 'startswith', '+CTS', self.SMS_receive)
+		#self.uart.add_line_callback('pls', 'startswith', '+', self.request)
 		self.uart.add_line_callback('urc', None, None, self.uart.urc.parse_urc)
-		# Network time fetch will have a special callback because execution takes a LONG time
-		self.uart.urc._events.append('PSUTTZ')
-		self.uart.urc._events.append('HTTPREAD')
+		# Special callbacks
+		self.uart.urc.add_event('PSUTTZ', self.use_network_time)
+		self.uart.urc.add_event('HTTPREAD', self.fetch_data)
+		# The rest is automatic-ish...
 
 		# The parsers start method is a generator so it's called like this
 		get_event_loop().create_task(self.uart.start())
@@ -50,12 +56,16 @@ class GSM:
 		# Just to keep consistent API, make this a coroutine too
 		yield
 
+	def fetch_data(self, line):
+		print("data: %s" %line)
+		return True
+
 	def push_powerbutton(self, push_time=2000):
 		rtb.GSM_PWR_PIN.low()
 		yield from sleep(push_time)
 		rtb.GSM_PWR_PIN.high()
 
-	def at_mode_init(self):
+	def at_mode_init(self, boot=True):
 		# Make sure autobauding autobauds
 		resp = yield from self.uart.cmd("AT")
 		# Echo off
@@ -64,6 +74,9 @@ class GSM:
 		resp = yield from self.uart.cmd("AT+IPR=115200")
 		# Network registration messages enable
 		resp = yield from self.uart.cmd("AT+CREG=2")
+		if boot:
+			# Network time fetch for first time
+			resp = yield from self.retrieve_urc("AT+CLTS=1")
 
 	def at_sms_init(self):
 		# Use Text mode with SMS
@@ -88,7 +101,7 @@ class GSM:
 		resp = yield from self.uart.cmd("AT+CSCLK=%d" % mode)
 
 	# TODO: Autobauding -> set baud and flow control (rmember to reinit the UART...)
-	def set_flow_control(value=True):
+	def set_flow_control(self, value=True):
 		"""Enables/disables RTS/CTS flow control on the module and UART"""
 		if value:
 		    resp = yield from self.uart.cmd("AT+IFC=2,2")
@@ -100,65 +113,81 @@ class GSM:
 	def at_test(self):
 		yield from self.uart.cmd('AT')
 
-	def fetch_network_time(self):
-		""" Use GSM network time as a timestamp """
-		if not self.network_time:
-			self.uart.urc.OVERRIDE = True # Data must be raw
-			self.network_time = yield from self.retrieve_urc("AT+CLTS=1", urc="PSUTTZ", index=1)
-		else: # Network time has been fetched at least once, and CCLK is local time. TODO: indicate.
-			self.network_time = yield from self.retrieve_urc("AT+CCLK") # This is local time
+	def use_network_time(self, time):
+		self.network_time = time
+		return True
 
-		self.uart.urc.OVERRIDE = False
-		return self.network_time
+	def fetch_network_time(self, time):
+		""" Use GSM network time as a timestamp """
+		# Or rather not, because it says operation not allowed
+		#if not time:
+			# Network time has been fetched at least once, and CCLK is local time. TODO: indicate.
+			#self.network_time = yield from self.retrieve_urc("AT+CCLK", "CLK") # This is local time
+			#return '+' in self.network_time
+		self.boot_time = time
+		return True
 
 	def at_id_init(self):
+		yield from sleep(10000)
+		#self.at_mode_init() No fixed baud T_T
 		# Obtain subscriber number for 'client ID'
-		self.CNUM = yield from self.retrieve_urc('AT+CNUM', index=1, timeout=2000)
+		resp = yield from self.uart.cmd('AT')
+		resp = yield from self.uart.cmd('ATE0') # But no fixed bauds
 
-		# TODO: Why??
-		#attached = yield from self.retrieve_urc('AT+CGATT?')
-		#self.CGATT = '1' in attached
-		#if self.CGATT:
-		#	yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
+		ready = yield from self.at_ready()
+		if ready:
+			self.READY = True
+			yield from sleep(2000)
+			self.CNUM = yield from self.retrieve_urc('AT+CNUM', urc="NUM", index=1, timeout=4000)
+			attached = yield from self.retrieve_urc('AT+CGATT?', urc="GATT", timeout=4000)
+			self.CGATT = '1' in attached
+			if self.CGATT:
+				yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
 
 	def at_ready(self):
-		ready = yield from self.retrieve_urc('AT+CPIN?')
-		self.CPIN = 'READY' in ready
+		pin = yield from self.retrieve_urc('AT+CPIN?', timeout=1000)
+		if pin:
+			print("%s" %(pin))
+			self.CPIN = 'READY' in pin
+			if 'SIM' in pin:
+				print("SIM card is locked. Please use unlock it with a cell phone (recommended) or with a gsm method. (More at Github Readme)")
 		return self.CPIN
+
+	def unlock_sim_pin(self, code):
+		""" Unlocks SIM. Do NOT use this function unless you are absolutely out of equipment (cell phones) """
+		if code:
+			yield from self.retrieve_urc('AT+CPIN=%s' %code)
+			yield from sleep(2000)
+			yield from self.retrieve_urc('AT+CLCK="SC",0,"%s"' %code)
+			yield from sleep(2000)
 
 	def at_connect(self, PROXY_IP, USERNAME, PASSWORD):
 		""" Connects to GPRS proxy server. Connection may only be carried out if CPIN is ready """
-		if self.at_ready():
-			# Query connection status
-			status = yield from self.retrieve_urc('AT+CIPSTATUS', urc='STATE')
-			if int(status):
-				# Close all previous IP sessions
-				self.uart.cmd("AT+CIPSHUT")
+		if self.READY:
+			yield from sleep(7000)
+			yield from self.uart.cmd('AT')
 
-			# Define PDP context
-			pdp = yield from self.uart.cmd('AT+CGDCONT=1,"IP","%s"' %(PROXY_IP))
-			self.PDP = not 'ERROR' in pdp
-			# Set up single connection mode
-			yield from self.uart.cmd('AT+CIPMUX=0')
+			yield from self.uart.cmd("AT+CIPSHUT")
+			yield from self.uart.cmd('AT+CIPSTATUS')
+
+			yield from sleep(1000) # 'Flow control.'
+			yield from self.uart.cmd('AT+CGDCONT=1,"IP","%s"' %(PROXY_IP))
+			yield from sleep(1000)
+			yield from self.uart.cmd('AT+CIPMUX=0') # Set up single connection mode
+			yield from sleep(1000)
+	
 			# Attach GPRS
-			attached = yield from self.retrieve_urc("AT+CGATT=1")
-			self.CGATT = '1' in attached
+			yield from self.uart.cmd("AT+CGATT=1")
+			yield from sleep(1000)
 
-			if self.CGATT and self.PDP:
-				# Start task and set APN, user name and password
-				yield from self.uart.cmd('AT+CSTT="%s", "%s", "%s"' %(PROXY_IP, USERNAME, PASSWORD))
-				# Bring up the wireless. This takes a while.
-				error = yield from self.retrieve_urc('AT+CIICR') # TODO: run until complete
-				yield from sleep(5000)
-				# Local IP get. Might be mandatory in some cases. Must be called after PDP context activation.
-				yield from self.uart.cmd('AT+CIFSR', 'CIFSR')
-
-				# -> Raw TCP:
-				# yield from self.uart.cmd('AT+CIPSTART="TCP","%s","%s"' %(server_url, PORT))
-				
-				if not 'ERROR' in str(error):
-					return True
-		return False
+			yield from self.uart.cmd('AT+CSTT="%s", "%s", "%s"' %(PROXY_IP, USERNAME, PASSWORD))
+			yield from sleep(1000)		
+			yield from self.uart.cmd('AT+CIICR')
+			# Bringing up the wireless takes a while
+			yield from sleep(10000)
+			# If you can't connect, no signal, or your card does not support GPRS...
+			# TODO: Enable URC and see if you can get local IP. return true
+			yield from self.uart.cmd('AT+CIFSR') # Local IP get, might be mandatory
 	
 	def at_disconnect(self):
 		# Shut down TCP/UDP connections
@@ -170,7 +199,7 @@ class GSM:
 		if self.CGATT:
 			yield from self.uart.cmd('AT+CGATT=0')
 
-    def start_http_session(self, PROXY_IP):
+	def start_http_session(self, PROXY_IP):
 		""" Called after at_connect """
 		# Init HTTP service
 		yield from self.uart.cmd('AT+HTTPINIT')
@@ -217,16 +246,28 @@ class GSM:
 		self.uart.urc.OVERRIDE = False
 		return resp
 
-	def retrieve_urc(self, cmd, urc=None, index=0, timeout=600):
+	def retrieve_urc(self, cmd, urc="", index=0, timeout=600):
 		""" URC handler wrapper """
+		command = cmd
 		cmd = yield from self.uart.cmd(cmd)
-		resp = yield from self.uart.urc.retrieve_response(cmd, urc, index, timeout)
+		resp = yield from self.uart.urc.retrieve_response(command, urc, index, timeout)
+		if not resp:
+			print("No URC obtained in time.")
 		return resp
+
+	def restart_uart(self):
+		self.uart.del_line_callback('urc')
+		yield from self.uart.stop()
+		self.uart_wrapper.deinit()
+		yield from sleep(1000)
+		self.uart_wrapper = uartparser.UART_with_fileno(rtb.GSM_UART_N, 115200, read_buf_len=256)
+		self.uart = uartparser.UARTParser(self.uart_wrapper)
 
 	def stop(self):
 		# TODO: delete all callbacks
 		#self.uart.del_line_callback('sms')
 		self.uart.del_line_callback('urc')
+		self.uart.del_line_callback('pls')
 		yield from self.at_disconnect()
 		yield from self.push_powerbutton()
 		yield from self.uart.stop()
