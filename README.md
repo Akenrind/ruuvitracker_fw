@@ -5,7 +5,34 @@ RuuviTracker firmware is based on MicroPython, an MIT-licensed implementation of
 ## Getting set up
 
 ### Dependencies
-In order to develop code for RuuviTracker, you must have these dependencies installed on your system.
+
+In order to begin, you must have these dependencies installed on your system.
+
+**NOTE**: [stlink](https://github.com/texane/stlink) can't be installed via package managers.
+
+#### Quick guide
+
+##### **Debian**:
+
+`sudo apt-get install git dfu-util gcc-arm-none-eabi libusb-dev screen build-essential openocd autoconf dosfstools rsync`
+
+##### **Ubuntu**:
+
+<https://kirjoitusalusta.fi/ruuvitracker-ubuntu1404>
+
+##### **Fedora** (not tested yet):
+
+`sudo yum install git dfu-util arm-none-eabi-gcc libusb-devel screen make automake gcc gcc-c++ kernel-devel openocd dosfstools rsync`
+
+##### **Windows**:
+
+Currently, flashing is only supported on UNIX-like systems, such as Linux and OS X. If you are a Windows user, refer to this virtual machine related setup: <https://kirjoitusalusta.fi/ruuvitracker-ubuntu1404> 
+
+##### Others:
+
+Install from source what you can't obtain via package managers.
+
+#### Complete list
 
 * [git](https://git-scm.com/)
 
@@ -17,13 +44,13 @@ In order to develop code for RuuviTracker, you must have these dependencies inst
 
 * [stlink](https://github.com/texane/stlink), stm32 discovery line linux programmer
 
-* *libusb-dev*, USB developer library
+* [libusb-dev](http://www.libusb.org/), USB developer library
 
-* *autoconf*
+* [autoconf](http://www.gnu.org/software/autoconf/autoconf.html)
 
-* *build-essential*, essential build tools
+* **build-essential**, essential build tools
 
-* *screen*, an application which allows you to run programs in a console section, detach from them and then later resume them
+* [screen](https://www.gnu.org/software/screen/), an application which allows you to run programs in a console section
 
 ### Recommended Utilities
 
@@ -32,11 +59,6 @@ In order to develop code for RuuviTracker, you must have these dependencies inst
 * [dosfstools](https://github.com/dosfstools/dosfstools), for creating, checking and labeling file systems of the FAT family
 
 (You will need `fsck.fat` for dirty bit removal if the device is not properly unmounted.)
-
-NOTE: stlink has to be installed from source.
-
-On *Debian*:
-sudo apt-get install git dfu-util gcc-arm-none-eabi libusb-dev screen build-essential openocd autoconf dosfstools rsync
 
 ### Building
 
@@ -49,14 +71,14 @@ in this case you must have your board files in the standard location under `stmh
 
 ## Flashing == Installing
 
-Currently, flashing is only supported on UNIX-like systems, such as Linux and OS X. If you are a Windows user, refer to this virtual machine related setup: <https://kirjoitusalusta.fi/ruuvitracker-ubuntu1404>
-
 ### 1. Enter bootloader state
 The device must be in bootloader state in order to receive firmware code.
 There's a small switch on the board that you must hold down while plugging in the external power source.
 
 1) Hold down the switch on the board while plugging in the external power source.
+
 2) Plug the device into your PC via microUSB cable, the switch may now be released.
+
 3) Run `ruuvi_program.sh`, this will look for compiled firmware and install the "best". You may need root privileges.
 
 ### 2. Reset
@@ -82,19 +104,25 @@ On OSX it's on `/dev/tty.usbmodemXXXX` (exact number is probably board specific)
 
 Copy the files & directories under `stmhal/boards/RUUVITRACKER_C3/copy_to_board` to the board flash-drive.
 
+`cp -r stmhal/boards/RUUVITRACKER_C3/copy_to_board/* /device/mountpoint/`
+
+See 'Tips' for rsync utility.
+
 ## Hardware
 
 Schematics, datasheets and other hardware related references are in the [ruuvitracker_hw](https://github.com/RuuviTracker/ruuvitracker_hw/tree/revC3) -repo.
 
 ## Testing
 
-Run *_test.py scripts under the scripts folder.
+Via console, run `*_test.py` scripts under the scripts folder (copy-paste, execfile(), or so.)
 
 ## Tips
 
-* `screen` output can be logged with -L option
+* `screen` output can be logged with the `-L` option. Log will be saved in `screenlog.X` file.
 
-* You may use `rsync` for copying in the code
+* You may use `rsync` for copying in the code:
+
+`rsync -avzh --progress --delete --include='*.py' --exclude '*' /path/to/stmhal/boards/RUUVITRACKER_C3/copy_to_board/* /mountpointof/PYBFLASH`
 
 * If you have excluded (and deleted) board files because of compactness, you may run `./ignore_deleted.sh` for commits
 
@@ -102,7 +130,7 @@ Run *_test.py scripts under the scripts folder.
 
 ### General
 
-* Linux users: make sure your udev rules are alright
+* Linux users: make sure your [udev rules](https://wiki.archlinux.org/index.php/Udev) are alright
 
 * Check your USB 1 and USB 2 drivers (bootloader uses the latter)
 
@@ -120,21 +148,27 @@ Unlock SIM pin and switch off SIM PIN query with a cell phone (recommended).
 
 * In order to remove dirty bit, run `fsck.vfat -a /dev/sdX # Device here`
 
-### The flash storage is full.
-
-* rm -rI .Trash-1000 directory on Pyboard
-
-* rm -rI OS X resource forks
-
-* Exclude everything except '*.py'-files with rsync
-
-* TODO: uPython C modules, we are seriously running out of space
-
 ### Software is broken. / Can't exit loops.
 
 Refer to [MicroPython reset procedures](https://micropython.org/doc/tut-reset).
 
 You may need to re-flash the software back in.
+
+### The flash storage is full.
+
+* `rm -rI .Trash-1000` directory on Pyboard
+
+* `rm -r ._* .DS_Store` (OS X resource forks)
+
+* `ls -a` and remove redundant files
+
+* Remember to exclude everything except '*.py'-files with rsync
+
+* Re-write all files (remember backups)
+
+* Refer to "The file system will not mount" (storage can be smaller because of corrupt sectors)
+
+* TODO: uPython C modules, we are seriously running out of space
 
 ### Scripts using GSM module crash.
 
