@@ -3,9 +3,6 @@ import rtb
 import uartparser
 from uasyncio.core import get_event_loop, sleep
 
-# TODO: This thing needs a proper state machine to keep track of the sleep modes
-# NOTE: tracker.py keeps track of the sleep modes.
-
 GET=0
 POST=1
 HEAD=2
@@ -14,7 +11,7 @@ class GSM:
 	uart_wrapper = None # Low-Level UART
 	uart = None # This is the parser
 
-	error = None # CME error
+	error = "" # CME error
 	boot_time = None # Indicates whether network time has been fetched, NOT updated in real-time
 	CNUM = None # Subscriber number
 
@@ -22,29 +19,16 @@ class GSM:
 	CPIN = False # PIN inserted / ready
 	PDP = False # GPRS PDP context
 	READY = False
-	
-	# Sleep request and cause of sleep
-	# eg. sim is locked?
 
 	def __init__(self):
 		pass
 
-	def start(self):
+	def start(self, autobauding=False):
 		# Try without flow control first
 		self.uart_wrapper = uartparser.UART_with_fileno(rtb.GSM_UART_N, 115200, read_buf_len=256)
 		#self.uart_wrapper = uartparser.UART_with_fileno(rtb.GSM_UART_N, 115200, read_buf_len=256, flow=pyb.UART.RTS | pyb.UART.CTS)
 		# TODO: schedule something that will reset the board to autobauding mode if it had not initialized within X seconds
 		self.uart = uartparser.UARTParser(self.uart_wrapper)
-
-		#self.uart.add_line_callback('sms', 'startswith', '+CTS', self.SMS_receive)
-		#self.uart.add_line_callback('pls', 'startswith', '+', self.request)
-		self.uart.add_line_callback('urc', None, None, self.uart.urc.parse_urc)
-		# Special callbacks
-		self.uart.urc.add_event('PSUTTZ', self.use_network_time)
-		self.uart.urc.add_event('HTTPREAD', self.fetch_data)
-		# The rest is automatic-ish...
-
-		# The parsers start method is a generator so it's called like this
 		get_event_loop().create_task(self.uart.start())
 
 		# Power on
@@ -52,7 +36,6 @@ class GSM:
 		yield from self.push_powerbutton()
 		# Assert DTR to enable module UART (we can also sample the DTR pin to see if the module is powered on)
 		rtb.GSM_DTR_PIN.low()
-
 		# Just to keep consistent API, make this a coroutine too
 		yield
 
@@ -65,18 +48,54 @@ class GSM:
 		yield from sleep(push_time)
 		rtb.GSM_PWR_PIN.high()
 
-	def at_mode_init(self, boot=True):
+	def at_mode_init(self, save=False, fixedBaud=True):
+		""" Configure and save configuration. Run this if you use Tracker for the first time """
+		yield from sleep(10000)
+		self.uart.verbose = True
 		# Make sure autobauding autobauds
 		resp = yield from self.uart.cmd("AT")
-		# Echo off
-		resp = yield from self.uart.cmd("ATE0")
-		# Set fixed baudrate
-		resp = yield from self.uart.cmd("AT+IPR=115200")
+		resp = yield from self.uart.cmd("ATE1")
+		resp = yield from self.uart.cmd("AT+CFUN=0")
+		if fixedBaud:
+			# Set fixed baudrate
+			resp = yield from self.uart.cmd("AT+IPR=115200")
+			# Set hardware flow control
+			yield from self.set_flow_control()
+		else:
+			# Use autobaud
+			resp = yield from self.uart.cmd("AT+IPR=0")
 		# Network registration messages enable
 		resp = yield from self.uart.cmd("AT+CREG=2")
-		if boot:
-			# Network time fetch for first time
-			resp = yield from self.retrieve_urc("AT+CLTS=1")
+		# Enable verbose CME error report mode
+		resp = yield from self.uart.cmd("AT+CMEE=2")
+		# Network time fetch enable
+		resp = yield from self.uart.cmd("AT+CLTS=1")
+		# Show current profile
+		resp = yield from self.uart.cmd("AT&V")
+		# Save changes
+		if save:
+			resp = yield from self.uart.cmd("ATE0&W")
+			resp = yield from self.uart.cmd("AT")
+			resp = yield from self.uart.cmd("AT")
+			resp = yield from self.uart.cmd("ATE1&W")
+			resp = yield from self.uart.cmd("AT")
+		resp = yield from self.uart.cmd("AT+IPR?")
+		resp = yield from self.uart.cmd("AT+CFUN=0")
+		resp = yield from self.uart.cmd("AT+IPR=115200")
+		resp = yield from self.uart.cmd("AT+IPR?")
+		resp = yield from self.uart.cmd("AT+CFUN=0")
+		resp = yield from self.uart.cmd("AT+CFUN?")
+		resp = yield from self.uart.cmd("AT+CFUN=1")
+		resp = yield from self.uart.cmd("AT+CNUM")
+		yield from sleep(10000)
+
+	def at_reset(self):
+		resp = yield from self.uart.cmd("AT")
+		yield from self.set_flow_control(False)
+		resp = yield from self.uart.cmd("AT+IPR=0")
+		resp = yield from self.uart.cmd("AT&F")
+		resp = yield from self.uart.cmd("ATE0&W")
+		resp = yield from self.uart.cmd("AT")
 
 	def at_sms_init(self):
 		# Use Text mode with SMS
@@ -84,23 +103,24 @@ class GSM:
 		# Indicate with CMTI
 		yield from self.uart.cmd('AT+CNMI=1,2,0,0,0')
 
-	# TODO: Add GSM command methods (putting the module to various sleep modes etc)
-
+	@staticmethod
 	def sleep():
 		"""Put module to sleep. This assumes slow-clock is set to 1"""
 		rtb.GSM_DTR_PIN.high()
 
+	@staticmethod
 	def wakeup():
 		"""Wake up from sleep. This assumes slow-clock is set to 1"""
 		rtb.GSM_DTR_PIN.low()
 		# The serial port is ready after 50ms
 		yield from sleep(50)
 
-	def set_slow_clock(mode=1):
+	def set_slow_clock(self, mode=1):
 		"""Sets slow-clock mode, 1 is recommended, DTR controls sleep mode then"""
 		resp = yield from self.uart.cmd("AT+CSCLK=%d" % mode)
 
 	# TODO: Autobauding -> set baud and flow control (rmember to reinit the UART...)
+	# ^NOTE: the baud and flow control settings will be saved in a profile after first configuration
 	def set_flow_control(self, value=True):
 		"""Enables/disables RTS/CTS flow control on the module and UART"""
 		if value:
@@ -110,34 +130,37 @@ class GSM:
 		    resp = yield from self.uart.cmd("AT+IFC=0,0")
 		    self.uart_wrapper.init(115200, read_buf_len=256, flow=0)
 
-	def at_test(self):
-		yield from self.uart.cmd('AT')
+	def add_callbacks(self):
+		#self.uart.add_line_callback('sms', 'startswith', '+CTS', self.SMS_receive)
+		self.uart.add_line_callback('pls', 'startswith', '+', self.fetch_data)
+		self.uart.add_line_callback('urc', None, None, self.uart.urc.parse_urc)
+		# Special callbacks
+		self.uart.urc.add_event('PSUTTZ', self.use_network_time)
+		self.uart.urc.add_event('HTTPREAD', self.fetch_data)
+		# The rest is automatic-ish...
+		yield
 
 	def use_network_time(self, time):
-		self.network_time = time
-		return True
-
-	def fetch_network_time(self, time):
 		""" Use GSM network time as a timestamp """
-		# Or rather not, because it says operation not allowed
-		#if not time:
 			# Network time has been fetched at least once, and CCLK is local time. TODO: indicate.
 			#self.network_time = yield from self.retrieve_urc("AT+CCLK", "CLK") # This is local time
 			#return '+' in self.network_time
 		self.boot_time = time
 		return True
 
-	def at_id_init(self):
-		yield from sleep(10000)
-		#self.at_mode_init() No fixed baud T_T
-		# Obtain subscriber number for 'client ID'
-		resp = yield from self.uart.cmd('AT')
-		resp = yield from self.uart.cmd('ATE0') # But no fixed bauds
-
+	def at_me_init(self):
+		""" Set module functional"""
+		yield from sleep(5000)
+		self.uart.verbose = True
+		yield from self.add_callbacks() # +verbose
+		# Pimpelipom
+		resp = yield from self.uart.cmd("AT")
+		resp = yield from self.uart.cmd("ATE1")
 		ready = yield from self.at_ready()
 		if ready:
 			self.READY = True
 			yield from sleep(2000)
+			# Obtain subscriber number for 'client ID'
 			self.CNUM = yield from self.retrieve_urc('AT+CNUM', urc="NUM", index=1, timeout=4000)
 			attached = yield from self.retrieve_urc('AT+CGATT?', urc="GATT", timeout=4000)
 			self.CGATT = '1' in attached
@@ -145,12 +168,13 @@ class GSM:
 				yield from self.uart.cmd('AT+CGATT=0') # Detach GPRS
 
 	def at_ready(self):
-		pin = yield from self.retrieve_urc('AT+CPIN?', timeout=1000)
+		pin = yield from self.retrieve_urc('AT+CPIN?', timeout=3000)
 		if pin:
-			print("%s" %(pin))
 			self.CPIN = 'READY' in pin
+			if 'ERROR' in pin or 'SERTED' in pin:
+				self.error = "Unable to read SIM (not inserted? Loose connector?)"
 			if 'SIM' in pin:
-				print("SIM card is locked. Please use unlock it with a cell phone (recommended) or with a gsm method. (More at Github Readme)")
+				self.error = "SIM card is locked. Please use unlock it with a cell phone (recommended) or with a gsm method. (More at Github Readme)"
 		return self.CPIN
 
 	def unlock_sim_pin(self, code):
@@ -255,16 +279,7 @@ class GSM:
 			print("No URC obtained in time.")
 		return resp
 
-	def restart_uart(self):
-		self.uart.del_line_callback('urc')
-		yield from self.uart.stop()
-		self.uart_wrapper.deinit()
-		yield from sleep(1000)
-		self.uart_wrapper = uartparser.UART_with_fileno(rtb.GSM_UART_N, 115200, read_buf_len=256)
-		self.uart = uartparser.UARTParser(self.uart_wrapper)
-
 	def stop(self):
-		# TODO: delete all callbacks
 		#self.uart.del_line_callback('sms')
 		self.uart.del_line_callback('urc')
 		self.uart.del_line_callback('pls')

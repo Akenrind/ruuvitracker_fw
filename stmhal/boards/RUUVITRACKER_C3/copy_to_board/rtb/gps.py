@@ -7,7 +7,7 @@ from uasyncio.core import get_event_loop, sleep
 import nmea
 from nmea import FIX_TYPE_NONE, FIX_TYPE_2D, FIX_TYPE_3D
 from nmea import MSG_GPRMC, MSG_GPGSA, MSG_GPGGA
-
+#from rtb import mscounter
 
 # The handler class
 class GPS:
@@ -17,9 +17,9 @@ class GPS:
 	_next_fix = None
 
 	_buffer = list()
-	_last_update = None
 	_notice = ""
 	verbose = False
+	nofix = None
 
 	def __init__(self):
 		pass
@@ -27,7 +27,6 @@ class GPS:
 	def start(self):
 		self.uart_wrapper = uartparser.UART_with_fileno(rtb.GPS_UART_N, 115200, read_buf_len=256)
 		self.uart = uartparser.UARTParser(self.uart_wrapper)
-
 
 		# TODO: Add NMEA parsing callbacks here
 		self.uart.add_re_callback(r'GGA', r'^\$G[PLN]GGA,.*', self.gpgga_received)
@@ -47,8 +46,7 @@ class GPS:
 		rtb.pwr.GPS_ANT.request()
 		rtb.pwr.GPS_VCC.request()
 
-		self._last_update = pyb.millis()
-		self._buffer.append("init")
+		self.nofix = pyb.millis()
 
 		# Just to keep consistent API, make this a coroutine too
 		yield
@@ -58,25 +56,38 @@ class GPS:
 
 	def fill_buffer(self, interval_ms, timeout):
 		while True: # Tracking enabled etc
-			yield from sleep(interval_ms)
-			#print("Last update: %s" %self._last_update)
-
 			if len(self._buffer) > 8:
 				self._buffer.pop(0)
 
-			#if self._last_update >= timeout:
-			#	self._buffer.append("nofix")
-			#	self._notice = "GPS: Fix was lost %s ms ago" %(self._last_update)
-			#	print(self._notice)
-
-			yield
-
-	def stream(self, interval_ms):
-		while True:
 			yield from sleep(interval_ms)
-			coords = self._buffer[len(self._buffer)-1]
-			print(coords)
-			yield
+			ticks = 0
+			if self.last_fix:
+				self.nofix = 0
+				ticks = int(pyb.elapsed_millis(self.last_fix.last_update))
+				print("Last fix: %d seconds ago" %(ticks/1000))
+			else:
+				ticks = int(pyb.elapsed_millis(self.nofix))
+				print("No fix yet.")
+				print("Fetching fix for the first time might take up to 15 minutes if the device has been powered off for a while.")
+				print("(Started GPS %d secs ago.)" %(ticks/1000))
+
+			if ticks >= timeout:
+				self._buffer.append("nofix")
+				self._notice = "GPS: Fix was lost %d secs ago" %(ticks/1000)
+				print(self._notice)
+
+	def sleep(self):
+		self.nofix = None
+		yield from self.set_standby()
+		yield from self.uart.stop()
+		self.uart_wrapper.deinit()
+
+	def wakeup(self):
+		yield from self.set_standby(False)
+		self.nofix = pyb.millis()
+		self.uart_wrapper = uartparser.UART_with_fileno(rtb.GPS_UART_N, 115200, read_buf_len=256)
+		self.uart = uartparser.UARTParser(self.uart_wrapper)
+		yield from self.uart.start()
 
 	def gprmc_received(self, match):
 		line = match.group(0)
@@ -90,7 +101,8 @@ class GPS:
 		if self._next_fix.lat != None:
 			self.last_fix = self._next_fix
 			self.last_fix.last_update = pyb.millis()
-			self._last_update = pyb.millis()
+			#self.timer.restart() # Fix obtained, clear time
+			#self.nofix = pyb.millis()
 			self._next_fix = None
 			if self.verbose:
 				print("===\r\nRMC lat=%s lon=%s altitude=%s\r\n==" % (self.last_fix.lat, self.last_fix.lon, self.last_fix.altitude))
@@ -138,6 +150,7 @@ class GPS:
 		# TODO: Check the response somehow ?
 
 	def stop(self):
+		self.nofix = None
 		self.uart.del_re_callback('RMC')
 		self.uart.del_re_callback('GGA')
 		self.uart.del_re_callback('GSA')
