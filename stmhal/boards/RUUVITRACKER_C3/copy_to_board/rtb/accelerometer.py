@@ -1,6 +1,7 @@
 from pyb import I2C
 import rtb
 from uasyncio.core import get_event_loop,sleep
+# TODO: There's a memory leak somewhere?
 
 class mma8652:
 	bus = None
@@ -61,7 +62,6 @@ class mma8652:
 		""" Read sensor data """
 		#r = self.bus.mem_read(1, self.addr, 0x16, timeout=200, addr_size=8)
 		#print("Event: %s" %r)
-		# TODO: it's doing something funny with auto-incrementation or something T_T
 		if self.fast_read:
 			#xyz = self.bus.mem_read(3, self.addr, 0x01, timeout=500, addr_size=8)
 			x = self.bus.mem_read(1, self.addr, 0x01, timeout=500, addr_size=8)
@@ -73,7 +73,13 @@ class mma8652:
 			y = self.bus.mem_read(1, self.addr, 0x02, timeout=500, addr_size=12)
 			z = self.bus.mem_read(1, self.addr, 0x03, timeout=500, addr_size=12)
 
-		return "x: %s, y: %s, z: %s" % (x, y, z)
+		return "ax: %s, ay: %s, az: %s" % (x, y, z)
+		#print(xyz)
+		#return xyz
+
+	#def stream(self):
+	#	a = self.read()
+	#	return a
 
 	def set_fifo(self, enabled):
 		""" Enable/disable Fast Read Mode """
@@ -87,28 +93,27 @@ class mma8652:
 		self.bus.mem_write(conf, self.addr, 0x09, timeout=200)
 
 	def set_sensitivity(self, sensitivity):
-		FF_MT_THS = 0x17
-		self.bus.mem_write(sensitivity, self.addr, FF_MT_THS, timeout=200)
+		self.bus.mem_write(sensitivity, self.addr, 0x17, timeout=200)
 
 	def conf_mt(self):
 		""" This function configures motion detection for the accelerometer """
 		# TODO: Debounce counter
-		FF_MT_COUNT = 0x18
-		FF_MT_THS = 0x17
-		FF_MT_CFG = 0x15
-		FF_MT_SRC = 0x16
+		#FF_MT_COUNT = 0x18
+		#FF_MT_THS = 0x17
+		#FF_MT_CFG = 0x15
+		#FF_MT_SRC = 0x16
 
 		# Detect motion after debounce. Detect motion in all 3d axises
 		cfg = 0x11
 
 		# Set debouce counter value
-		self.bus.mem_write(0x02, self.addr, FF_MT_COUNT, timeout=200)
+		self.bus.mem_write(0x02, self.addr, 0x18, timeout=200)
 
-		# Set motion threshold. DEBUG
-		self.bus.mem_write(0xB0, self.addr, FF_MT_THS, timeout=400)
+		# Set motion threshold
+		#self.bus.mem_write(0x00, self.addr, FF_MT_THS, timeout=400)
 
 		# Set actual motion configuration
-		self.bus.mem_write(0xf8, self.addr, FF_MT_CFG, timeout=400)
+		self.bus.mem_write(0xf8, self.addr, 0x15, timeout=400)
 
 		# Active mode, odr = 1.56 Hz
 		# Set Fast Read Mode for 8-bit results. GO
@@ -119,19 +124,20 @@ class mma8652:
 		self.bus.mem_write(conf, self.addr, 0x2a, timeout=200)
 
 	def start(self):
-		reg1 = 0x2a # System control register
-		reg2 = 0x2b # For self-test, reset and auto-sleep
-		reg3 = 0x2c # for auto-wake config with interrupts + interrupt polarity, initted earlier
-		reg4 = 0x2d # Interrupt enable register
-		reg5 = 0x2e # Interrupt configuration register
+		#reg1 = 0x2a # System control register
+		#reg2 = 0x2b # For self-test, reset and auto-sleep
+		#reg3 = 0x2c # for auto-wake config with interrupts + interrupt polarity, initted earlier
+		#reg4 = 0x2d # Interrupt enable register
+		#reg5 = 0x2e # Interrupt configuration register
 
 		# The device ought to be in standby mode for configuration
-		self.bus.mem_write(0x00, self.addr, reg1, timeout=200)
+		# self.bus.mem_write(0x00, self.addr, reg1, timeout=200)
+		#self.standby(True)
 
 		# Set 2g full range mode
 		self.bus.mem_write(0x00, self.addr, 0x0e, timeout=200)
 		# Self-test is not enabled, no reset, auto-sleep not enabled, normal power mode.
-		self.bus.mem_write(0x00, self.addr, reg2)
+		self.bus.mem_write(0x00, self.addr, 0x2b)
 
 		# Set intettupt configurations
 		# (Implement configuration of interrupt sources etc)
@@ -143,18 +149,18 @@ class mma8652:
 		self.bus.mem_write(chr(int_enable), self.addr, 0x2d, timeout=200)
 		self.bus.mem_write(chr(int_config), self.addr, 0x2e, timeout=200)
 
-		# Configure ff/mt
-		self.conf_mt()
+		# After this, call configure ff/mt
+		#self.standby(False) # active mode is enabled above?
 		
 	def calibrate(self, x, y, z):
 		""" Calibrate with offset registers. Must be called after boot-up """
-		off_x = 0x2f
-		off_y = 0x30
-		off_z = 0x31
+		#off_x = 0x2f
+		#off_y = 0x30
+		#off_z = 0x31
 
-		self.bus.mem_write(x, self.addr, off_x, timeout=200)
-		self.bus.mem_write(y, self.addr, off_y, timeout=200)
-		self.bus.mem_write(z, self.addr, off_z, timeout=200)
+		self.bus.mem_write(x, self.addr, 0x2f, timeout=200)
+		self.bus.mem_write(y, self.addr, 0x30, timeout=200)
+		self.bus.mem_write(z, self.addr, 0x31, timeout=200)
 
 	def interrupt_polarity(self, high=True, pushpull=True):
 		"""This configures the interrupt polarity, for the onboard it must be active-high and push-pull"""

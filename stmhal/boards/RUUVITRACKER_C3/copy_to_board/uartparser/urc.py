@@ -21,6 +21,7 @@ class URC():
 	def retrieve_response(self, cmd, urc="", index=0, timeout=600, interval=200):
 		resp_str = ""
 		timeout_iterate = int(timeout / interval)
+		returned = False
 
 		if not urc: # use default URC
 			urc = cmd[3:] # By default, urc is [AT+]URC[?][=<sth>]
@@ -33,7 +34,6 @@ class URC():
 		while timeout_iterate:
 			timeout_iterate = max(0, timeout_iterate)
 			timeout_iterate -= 1
-
 			resp_str = self._current_buffer
 
 			# Cut out commands from possible responses in case ECHO is not off...
@@ -42,25 +42,32 @@ class URC():
 				resp_str = resp_str[len(culled_cmd):]
 
 			if not urc in resp_str:
-				yield from sleep(interval)
-			else:
-				resp_str = resp_str[resp_str.index(urc)+len(urc)+2:] # Remember to take off ": "
-				# If not override				
-				try:
-					end = resp_str.index('+')
-					resp_str = resp_str[:end]
-				except ValueError:
-					end = None
-				print("%s --- %s" %(cmd, resp_str))
-				self.flush()
-				
-				# Return 'raw data' by default (eg. http data)
+				if 'CME' in resp_str: # We encountered an error, return it
+					returned = True
+				else:
+					yield from sleep(interval) # Wait for response...
+			else:	
+				returned = True
 
-				if not self.OVERRIDE: # Return data in index, not raw data
-					response = resp_str.split(",") # URC indices split
-					index = min(index, len(response)-1)
-					#response[index] = response[index][1:-1] # Take off double quotes
-					resp_str = response[index]
+			if returned:
+				if not 'CME' in resp_str: # Don't try to find echo from errors
+					resp_str = resp_str[resp_str.index(urc)+len(urc)+2:] # Remember to take off ": "
+					# If not override				
+					try:
+						end = resp_str.index('+')
+						resp_str = resp_str[:end]
+					except ValueError:
+						end = None
+					print("%s --- %s" %(cmd, resp_str))
+					self.flush()
+				
+					# Return 'raw data' by default (eg. http data)
+
+					if not self.OVERRIDE: # Return data in index, not raw data
+						response = resp_str.split(",") # URC indices split
+						index = min(index, len(response)-1)
+						#response[index] = response[index][1:-1] # Take off double quotes
+						resp_str = response[index]
 				return resp_str
 		else:
 			return ""
@@ -77,6 +84,8 @@ class URC():
 					if a:
 						print("DEBUG: dispatching data: %s" %a) # Boot time
 						self._events[e](a)
+	def truncate(self):
+		self._current_buffer = (self._current_buffer[:128] + '...') if len(self._current_buffer) > 128 else self._current_buffer
 
 	# Omits EOLs
 	def parse_urc(self, line): # TODO: perform ure callback here & test
@@ -85,6 +94,8 @@ class URC():
 			if c in r' \n\t\r': # Cull "Whitespace"
 				strfy.replace(c, '')
 		if strfy and not "AT+" in strfy: # Cull commands
+			if not self.OVERRIDE:
+				self.truncate()
 			buf = self._current_buffer + (strfy)
 			if "ERROR" in buf:
 				pass

@@ -249,12 +249,13 @@ def parse_gpgsa(line, fix=None):
     if fix.fix_type == FIX_TYPE_NONE:
         return fix
 
-    if parts[14] != '':
-        pdop = float(parts[14])
-    if parts[15] != '':
-        hdop = float(parts[15])
-    if parts[16] != '':
-        vdop = float(parts[16])
+	if len(parts) >= 14:
+		if parts[14] != '':
+		    pdop = float(parts[14])
+		if parts[15] != '':
+		    hdop = float(parts[15])
+		if parts[16] != '':
+		    vdop = float(parts[16])
 
     fix.received_messages |= MSG_GPGSA
     return fix

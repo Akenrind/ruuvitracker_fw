@@ -53,6 +53,7 @@ class UARTParser():
 	_raw_cb = None
 	_cmd_cb = None
 	_cmd_line = None
+	verbose = False
 
 	def __init__(self, uart):
 		self.uart = uart
@@ -84,36 +85,37 @@ class UARTParser():
 		# If parser was not running start it until we are done (the eventloop obviously must be running)
 		stop_when_done = False
 		if not self._run:
-		    # Start the parser coroutine
-		    get_event_loop().create_task(self.start())
-		    stop_when_done = True
+			# Start the parser coroutine
+			get_event_loop().create_task(self.start())
+			stop_when_done = True
 
 		self._cmd_line = None
 
 		# This is the callback for the parser
 		def _cb(recv):
-		    self._cmd_line = recv
-		    self._cmd_cb = None
+			self._cmd_line = recv
+			self._cmd_cb = None
 
 		# Wait for the read-buffer to be empty before sending our command
 		if not do_not_wait:
-		    while self.uart.any():
-		        yield from sleep(10)
-		
+			while self.uart.any():
+				yield from sleep(10)
+
 		# This claims to return immediately
 		yield from self.stream.awrite(b'%s%s' % (cmd, self.EOL.decode('ascii')))
 		self._cmd_cb = _cb
-		#print("CMD sent")
+		if self.verbose:
+			print("CMD sent")
 		# This might block but awrite will also first call the write and only then if it was a partial write schedule next one...
 		#self.uart.write(b'%s%s' % (cmd, self.EOL.decode('ascii')))
 		# Loop until timeout or received line
 		started = pyb.millis()
 		while not self._cmd_line:
-		    yield from sleep(10)
-		    if pyb.elapsed_millis(started) > timeout:
-		        self._cmd_line = CommandTimeout()
+			yield from sleep(10)
+			if pyb.elapsed_millis(started) > timeout:
+				self._cmd_line = CommandTimeout()
 		if stop_when_done:
-		    get_event_loop().create_task(self.stop())
+			get_event_loop().create_task(self.stop())
 		return self._cmd_line
 
 	def parse_buffer(self):
@@ -124,23 +126,24 @@ class UARTParser():
 		eolpos = self.recv_bytes.find(self.EOL, self._sol)
 		
 		while eolpos > -1:
-		    # End Of Line detected
-		    self.line = self.recv_bytes[self._sol:eolpos]
-		    flushnow = True
-		    print("_line=%s" % self.line)
-		    
-		    # The special case of a command callback
-		    if self._cmd_cb:
-		        if self._cmd_cb(self.line):
-		            flushnow = False
-		        if flushnow:
-		            self.flushto(eolpos+len(self.EOL))
-		        else:
-		            # Point the start-of-line to next line
-		            self._sol = eolpos+len(self.EOL)
-		        continue
+			# End Of Line detected
+			self.line = self.recv_bytes[self._sol:eolpos]
+			flushnow = True
+			if self.verbose:
+				print("_line=%s" % self.line)
 
-		    for cbid in self._str_cbs:
+			# The special case of a command callback
+			if self._cmd_cb:
+				if self._cmd_cb(self.line):
+					flushnow = False
+				if flushnow:
+					self.flushto(eolpos+len(self.EOL))
+				else:
+					# Point the start-of-line to next line
+					self._sol = eolpos+len(self.EOL)
+				continue
+
+			for cbid in self._str_cbs:
 				cbinfo = self._str_cbs[cbid]
 				if not cbinfo[0]: # No functionname
 					cbinfo[2](self.line)
@@ -149,20 +152,20 @@ class UARTParser():
 						if (cbinfo[2](self.line)):
 							flushnow = False
 
-		    for cbid in self._re_cbs:
-		        cbinfo =  self._re_cbs[cbid]
-		        match = cbinfo[0](self.line)
-		        if match:
-		            if (cbinfo[1](match)):
-		                flushnow = False
+			for cbid in self._re_cbs:
+				cbinfo =  self._re_cbs[cbid]
+				match = cbinfo[0](self.line)
+				if match:
+					if (cbinfo[1](match)):
+						flushnow = False
 
-		    if flushnow:
-		        self.flushto(eolpos+len(self.EOL))
-		    else:
-		        # Point the start-of-line to next line
-		        self._sol = eolpos+len(self.EOL)
-		    # And loop, just in case we have multiple lines in the buffer...
-		    eolpos = self.recv_bytes.find(self.EOL, self._sol)
+			if flushnow:
+				self.flushto(eolpos+len(self.EOL))
+			else:
+				# Point the start-of-line to next line
+				self._sol = eolpos+len(self.EOL)
+			# And loop, just in case we have multiple lines in the buffer...
+			eolpos = self.recv_bytes.find(self.EOL, self._sol)
 
 	def add_re_callback(self, cbid, regex, cb, method='search'):
 		"""Adds a regex callback for checking full lines, takes the regex as string and callback function. Optionally you can specify 'match' instead of 'search' as the method to use for matching.
