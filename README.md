@@ -8,17 +8,57 @@ RuuviTracker firmware is based on MicroPython, an MIT-licensed implementation of
 
 In order to begin, you must have these dependencies installed on your system.
 
-**NOTE**: [stlink](https://github.com/texane/stlink) can't be installed via package managers.
+##### **Ubuntu**:
 
-#### Quick guide
+**Virtual machines**:
+
+Chadez made an OVA: http://shell.jkry.org/~chadez/ruuvi/Ruuvitracker_fw_ubuntu.ova
+
+* Install [toolchain](https://launchpad.net/~terry.guo/+archive/ubuntu/gcc-arm-embedded)
+
+`sudo add-apt-repository ppa:terry.guo/gcc-arm-embedded`
+
+`sudo apt-get update`
+
+`sudo apt-get install gcc-arm-none-eabi=4.8.4.2014q3-0trusty11`
+
+* Install [stlink](https://github.com/texane/stlink)
+
+`sudo apt-get install git-core build-essential autoconf libusb-1.0-0-dev`
+
+`git clone https://github.com/texane/stlink.git`
+
+`cd stlink`
+
+`./autogen.sh`
+
+`./configure`
+
+`make`
+
+`sudo make install`
+
+`sudo cp *.rules /etc/udev/rules.d/`
+
+`sudo udevadm control --reload-rules`
+
+* Install [openocd 0.8.0](https://launchpad.net/ubuntu/+source/openocd) from deb
+
+`wget https://launchpad.net/ubuntu/+archive/primary/+files/openocd_0.8.0-1_i386.deb`
+
+`sudo dpkg -i openocd_0.8.0-1_i386.deb`
+
+* With Nucleos the STLink version is 2-1 so use correct interface:
+
+`openocd -f "interface/stlink-v2-1.cfg" -f "target/stm32f4x_stlink.cfg"`
+
+Discovery boards have STLink version 2
+
+`openocd -f "interface/stlink-v2.cfg" -f "target/stm32f4x_stlink.cfg"`
 
 ##### **Debian**:
 
 `sudo apt-get install git dfu-util gcc-arm-none-eabi libusb-dev screen build-essential openocd autoconf dosfstools rsync`
-
-##### **Ubuntu**:
-
-<https://kirjoitusalusta.fi/ruuvitracker-ubuntu1404>
 
 ##### **Fedora** (not tested yet):
 
@@ -26,13 +66,9 @@ In order to begin, you must have these dependencies installed on your system.
 
 ##### **Windows**:
 
-Currently, flashing is only supported on UNIX-like systems, such as Linux and OS X. If you are a Windows user, refer to this virtual machine related setup: <https://kirjoitusalusta.fi/ruuvitracker-ubuntu1404> 
+Currently, flashing is only supported on UNIX-like systems, such as Linux and OS X. If you are a Windows user, refer to the Ubuntu VM setup above.
 
-##### Others:
-
-Install from source what you can't obtain via package managers.
-
-#### Complete list
+##### **From source:**
 
 * [git](https://git-scm.com/)
 
@@ -48,9 +84,27 @@ Install from source what you can't obtain via package managers.
 
 * [autoconf](http://www.gnu.org/software/autoconf/autoconf.html)
 
-* **build-essential**, essential build tools
+* Essential build tools (Debian-based distros use **build-essential**-metapackage)
 
 * [screen](https://www.gnu.org/software/screen/), an application which allows you to run programs in a console section
+
+#### **NOTE**: [stlink](https://github.com/texane/stlink) can't be installed via package managers.
+
+`git clone https://github.com/texane/stlink.git`
+
+`cd stlink`
+
+`./autogen.sh`
+
+`./configure`
+
+`make`
+
+`sudo make install`
+
+`sudo cp *.rules /etc/udev/rules.d/`
+
+`sudo udevadm control --reload-rules`
 
 ### Recommended Utilities
 
@@ -93,12 +147,13 @@ If the flashing steps were correctly carried out, your operating system will be 
 
 See [MicroPython documentation](http://docs.micropython.org/en/latest/) for details about execution environment.
 
-**TODO**: Document the board specific python modules via [gh-pages](https://pages.github.com/) as they get more functionality.
+TODO: Document the board specific python modules via [gh-pages](https://pages.github.com/) as they get more functionality.
 
 ### REPL quickstart
 
 On Linux the REPL is on ACM device, `/dev/ttyACM0` if you don't have any other CDC serial ports.
-(NOTE: You may need sudo rights to execute `screen /dev/ttyACM0`.)
+
+(You may need sudo rights to execute `screen /dev/ttyACM0`.)
 
 On OSX it's on `/dev/tty.usbmodemXXXX` (exact number is probably board specific).
 
@@ -106,7 +161,7 @@ Copy the files & directories under `stmhal/boards/RUUVITRACKER_C3/copy_to_board`
 
 `cp -r stmhal/boards/RUUVITRACKER_C3/copy_to_board/* /device/mountpoint/`
 
-See 'Tips' for rsync utility.
+See 'Tips' for the `rsync` utility.
 
 ## Hardware
 
@@ -114,7 +169,7 @@ Schematics, datasheets and other hardware related references are in the [ruuvitr
 
 ## Testing
 
-Via console, run `*_test.py` scripts under the scripts folder (import <source>, copy-paste, execfile(), or so.)
+Via console, run `*_test.py` scripts under the scripts folder (copy-paste, execfile(), or so.)
 
 ## Tips
 
@@ -172,6 +227,14 @@ You may need to re-flash the software back in.
 
 ### Scripts using GSM module crash.
 
-TODO: Possible hardware failures?
+**TODO**: Possible hardware problems
+
+## RTB documentation
+
+**TODO**
+
+## Backend
+
+**TODO**
 
 [upy]: http://micropython.org/
